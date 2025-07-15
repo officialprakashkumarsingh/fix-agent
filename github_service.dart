@@ -98,9 +98,11 @@ class GitHubService extends ChangeNotifier {
       final code = Uri.parse(result).queryParameters['code'];
       if (code != null) {
         await _exchangeCodeForToken(code);
+      } else {
+        debugPrint('GitHub OAuth did not return a code');
       }
     } catch (e) {
-      // User cancelled
+      debugPrint('GitHub token exchange error: $e');
     } finally {
       await _setLoading(false);
     }
@@ -120,10 +122,16 @@ class GitHubService extends ChangeNotifier {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString(_tokenKey, _accessToken!);
           await _fetchUserDetails();
+          notifyListeners();
+        } else {
+          debugPrint('GitHub token response missing access_token: ${response.body}');
         }
+      } else {
+        debugPrint('GitHub token request failed with status ${response.statusCode}');
       }
+
     } catch (e) {
-      // Handle error
+      debugPrint('GitHub token exchange error: $e');
     }
   }
 
