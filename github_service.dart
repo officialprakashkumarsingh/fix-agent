@@ -26,6 +26,7 @@ class GitHubService extends ChangeNotifier {
   static const String _clientId = 'Ov23li9BRKnUAbjqCOL1';
   static const String _clientSecret = '26e6e65e2a69ee84b3e05f26c5494d7285c4e5fb';
   static const String _callbackUrlScheme = 'ahamaiapp';
+  static const String _callbackUrl = 'ahamaiapp://callback';
 
   // --- SharedPreferences Keys ---
   static const String _tokenKey = 'github_access_token';
@@ -93,14 +94,21 @@ class GitHubService extends ChangeNotifier {
       final url = Uri.https('github.com', '/login/oauth/authorize', {
         'client_id': _clientId,
         'scope': 'repo,user:email',
+        'redirect_uri': _callbackUrl,
       });
-      final result = await FlutterWebAuth2.authenticate(url: url.toString(), callbackUrlScheme: _callbackUrlScheme);
+      final result = await FlutterWebAuth2.authenticate(
+        url: url.toString(),
+        callbackUrlScheme: _callbackUrlScheme,
+      );
+      debugPrint('OAuth redirect result: ' + result);
       final code = Uri.parse(result).queryParameters['code'];
       if (code != null) {
         await _exchangeCodeForToken(code);
+      } else {
+        debugPrint('GitHub OAuth did not return a code');
       }
     } catch (e) {
-      // User cancelled
+      debugPrint('GitHub token exchange error: $e');
     } finally {
       await _setLoading(false);
     }
@@ -111,8 +119,14 @@ class GitHubService extends ChangeNotifier {
       final response = await http.post(
         Uri.parse('https://github.com/login/oauth/access_token'),
         headers: {'Accept': 'application/json'},
-        body: {'client_id': _clientId, 'client_secret': _clientSecret, 'code': code},
+        body: {
+          'client_id': _clientId,
+          'client_secret': _clientSecret,
+          'code': code,
+          'redirect_uri': _callbackUrl,
+        },
       );
+      debugPrint('Token exchange response: ${response.statusCode} ${response.body}');
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data.containsKey('access_token')) {
@@ -120,10 +134,16 @@ class GitHubService extends ChangeNotifier {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString(_tokenKey, _accessToken!);
           await _fetchUserDetails();
+          notifyListeners();
+        } else {
+          debugPrint('GitHub token response missing access_token: ${response.body}');
         }
+      } else {
+        debugPrint('GitHub token request failed with status ${response.statusCode}');
       }
+
     } catch (e) {
-      // Handle error
+      debugPrint('GitHub token exchange error: $e');
     }
   }
 
@@ -178,9 +198,20 @@ class GitHubService extends ChangeNotifier {
     await _setLoading(false);
   }
 
-  Future<http.Response> _get(String url) => http.get(Uri.parse(url), headers: {'Authorization': 'Bearer $_accessToken'});
-  Future<http.Response> _post(String url, {required Map<String, dynamic> body}) => http.post(Uri.parse(url), headers: {'Authorization': 'Bearer $_accessToken', 'Content-Type': 'application/json'}, body: json.encode(body));
-  Future<http.Response> _put(String url, {required Map<String, dynamic> body}) => http.put(Uri.parse(url), headers: {'Authorization': 'Bearer $_accessToken', 'Content-Type': 'application/json'}, body: json.encode(body));
+  Map<String, String> get _authHeader => {'Authorization': 'token $_accessToken'};
+
+  Future<http.Response> _get(String url) =>
+      http.get(Uri.parse(url), headers: _authHeader);
+
+  Future<http.Response> _post(String url, {required Map<String, dynamic> body}) =>
+      http.post(Uri.parse(url),
+          headers: {..._authHeader, 'Content-Type': 'application/json'},
+          body: json.encode(body));
+
+  Future<http.Response> _put(String url, {required Map<String, dynamic> body}) =>
+      http.put(Uri.parse(url),
+          headers: {..._authHeader, 'Content-Type': 'application/json'},
+          body: json.encode(body));
 
   Future<String> modifyCodeAndCreatePR({
     required GenerativeModel geminiModel,
